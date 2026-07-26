@@ -29,7 +29,7 @@ type Poller struct {
 // New returns a Poller wired to cfg, gh, and idx. idx should already be
 // loaded (e.g. via index.LoadCache) before the first PollOnce call.
 func New(cfg *config.Config, gh *github.Client, idx *index.Index) *Poller {
-	p := &Poller{cfg: cfg, gh: gh, idx: idx, httpClient: http.DefaultClient}
+	p := &Poller{cfg: cfg, gh: gh, idx: idx, httpClient: &http.Client{Timeout: 2 * time.Minute}}
 	p.healthy.Store(true) // no poll has run yet at startup
 	return p
 }
