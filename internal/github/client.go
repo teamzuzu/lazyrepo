@@ -66,6 +66,7 @@ func (c *Client) ListReleases(ctx context.Context, owner, repo string) ([]Releas
 			return nil, err
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "lazyrepo")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

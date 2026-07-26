@@ -15,6 +15,12 @@ import (
 	"github.com/teamzuzu/lazyrepo/internal/index"
 )
 
+// maxAssetSize is the largest release asset lazyrepo will download. GitHub
+// reports asset size in the release API response, so oversized assets can
+// be skipped before any download happens; the download function also
+// enforces this as a hard cap in case a server misreports its size.
+const maxAssetSize = 500 * 1024 * 1024 // 500 MB
+
 // Poller periodically checks configured GitHub repos for new .deb release
 // assets and adds them to an Index.
 type Poller struct {
@@ -106,6 +112,10 @@ func (p *Poller) pollRepo(ctx context.Context, rc *config.RepoConfig) error {
 			if p.idx.Has(key) {
 				continue
 			}
+			if asset.Size > maxAssetSize {
+				log.Printf("skipping %s: size %d exceeds max asset size %d", asset.Name, asset.Size, maxAssetSize)
+				continue
+			}
 
 			data, err := p.download(ctx, asset.DownloadURL)
 			if err != nil {
@@ -148,7 +158,14 @@ func (p *Poller) download(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAssetSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxAssetSize {
+		return nil, fmt.Errorf("asset exceeds size limit of %d bytes", maxAssetSize)
+	}
+	return data, nil
 }
 
 // assetKey returns the Index dedup key for a GitHub release asset: its

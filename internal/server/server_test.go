@@ -81,6 +81,46 @@ func TestHandleDebRedirect_Found(t *testing.T) {
 	}
 }
 
+// TestHandleDebRedirect_DotPrefixedFilename exercises the exact request path
+// a real apt client issues: RenderPackages emits Filename: ./<name> (a path
+// relative to the repo root), so apt requests /./<name>.deb, not /<name>.deb.
+// Go's http.ServeMux path-cleans that to /<name>.deb and issues a 301 before
+// handleDebRedirect ever sees the bare name; this test follows that 301 hop
+// (but not the subsequent 302 to GitHub) to confirm the whole round trip
+// behaves as apt would observe it.
+func TestHandleDebRedirect_DotPrefixedFilename(t *testing.T) {
+	s := New(newTestIndex(), fakeHealth{healthy: true})
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Follow the mux's 301 path-cleaning redirect (via has length 1
+			// at that point), but stop before following the subsequent 302
+			// to GitHub (via has length 2 at that point) so we can assert
+			// on it directly instead of actually fetching from GitHub.
+			if len(via) >= 2 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+
+	resp, err := client.Get(ts.URL + "/./pve-microvm_0.3.21-1_all.deb")
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (after following the mux's path-cleaning 301)", resp.StatusCode)
+	}
+	want := "https://github.com/rcarmo/pve-microvm/releases/download/v0.3.21/pve-microvm_0.3.21-1_all.deb"
+	if got := resp.Header.Get("Location"); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+}
+
 func TestHandleDebRedirect_NotFound(t *testing.T) {
 	s := New(newTestIndex(), fakeHealth{healthy: true})
 	req := httptest.NewRequest(http.MethodGet, "/does-not-exist.deb", nil)

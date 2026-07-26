@@ -12,6 +12,15 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
+// maxControlTarSize bounds the decompressed size of a control.tar member.
+// Real control.tar members are realistically kilobytes, so this ceiling is
+// generous but prevents a decompression bomb from exhausting memory.
+const maxControlTarSize = 64 * 1024 * 1024 // 64 MB
+
+// maxControlFileSize bounds the size of the control file extracted from
+// inside control.tar. A real Debian control file is at most a few KB.
+const maxControlFileSize = 1 * 1024 * 1024 // 1 MB
+
 // ControlFields is the subset of a .deb's control file that lazyrepo needs
 // to render an apt Packages stanza.
 type ControlFields struct {
@@ -57,6 +66,9 @@ func ParseControl(debBytes []byte) (*ControlFields, error) {
 func decompressControlTar(name string, data []byte) ([]byte, error) {
 	switch {
 	case name == "control.tar":
+		if int64(len(data)) > maxControlTarSize {
+			return nil, fmt.Errorf("control.tar exceeds size limit of %d bytes", maxControlTarSize)
+		}
 		return data, nil
 	case strings.HasSuffix(name, ".gz"):
 		r, err := gzip.NewReader(bytes.NewReader(data))
@@ -64,23 +76,36 @@ func decompressControlTar(name string, data []byte) ([]byte, error) {
 			return nil, err
 		}
 		defer r.Close()
-		return io.ReadAll(r)
+		return readAllLimited(r, maxControlTarSize)
 	case strings.HasSuffix(name, ".xz"):
 		r, err := xz.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
-		return io.ReadAll(r)
+		return readAllLimited(r, maxControlTarSize)
 	case strings.HasSuffix(name, ".zst"):
 		r, err := zstd.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return nil, err
 		}
 		defer r.Close()
-		return io.ReadAll(r)
+		return readAllLimited(r, maxControlTarSize)
 	default:
 		return nil, fmt.Errorf("unsupported control.tar compression for member %q", name)
 	}
+}
+
+// readAllLimited reads all of r, but returns an error instead of silently
+// truncating if r produces more than limit bytes.
+func readAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("decompressed data exceeds size limit of %d bytes", limit)
+	}
+	return data, nil
 }
 
 func extractControlFile(tarBytes []byte) (string, error) {
@@ -95,7 +120,7 @@ func extractControlFile(tarBytes []byte) (string, error) {
 		}
 		name := strings.TrimPrefix(hdr.Name, "./")
 		if name == "control" {
-			b, err := io.ReadAll(tr)
+			b, err := readAllLimited(tr, maxControlFileSize)
 			if err != nil {
 				return "", fmt.Errorf("reading control file: %w", err)
 			}
