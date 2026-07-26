@@ -1,0 +1,12 @@
+listen: ":8080"
+poll_interval: 15m
+cache_file: /data/index.json
+
+repos:
+  - repo: rcarmo/pve-microvm
+    # asset_filter omitted -> any release asset ending in .deb is indexed
+
+  # Example of a repo that publishes more than one .deb per release, where
+  # only assets matching this pattern should be tracked:
+  # - repo: someorg/multi-deb-project
+  #   asset_filter: 'agent-.*_amd64\.deb'
