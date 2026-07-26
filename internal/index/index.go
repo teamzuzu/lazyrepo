@@ -1,0 +1,178 @@
+package index
+
+import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"sync"
+)
+
+// PackageEntry is one Debian package known to lazyrepo, derived from a
+// single GitHub release asset.
+type PackageEntry struct {
+	Key          string // dedup identity, e.g. "sha256:<digest>"
+	Package      string
+	Version      string
+	Architecture string
+	Description  string
+	Depends      string
+	Filename     string // bare asset name, e.g. "pve-microvm_0.3.21-1_all.deb"
+	Size         int64
+	SHA256       string
+	DownloadURL  string
+}
+
+// Index is the in-memory set of known packages, safe for concurrent use.
+type Index struct {
+	mu      sync.RWMutex
+	entries map[string]PackageEntry
+}
+
+// New returns an empty Index.
+func New() *Index {
+	return &Index{entries: make(map[string]PackageEntry)}
+}
+
+// Has reports whether an entry with the given Key is already indexed.
+func (idx *Index) Has(key string) bool {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	_, ok := idx.entries[key]
+	return ok
+}
+
+// Add inserts or replaces the entry for e.Key.
+func (idx *Index) Add(e PackageEntry) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.entries[e.Key] = e
+}
+
+// All returns every entry, sorted by Package then Version for stable output.
+func (idx *Index) All() []PackageEntry {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	out := make([]PackageEntry, 0, len(idx.entries))
+	for _, e := range idx.entries {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Package != out[j].Package {
+			return out[i].Package < out[j].Package
+		}
+		return out[i].Version < out[j].Version
+	})
+	return out
+}
+
+// Lookup finds the entry whose Filename matches the given bare filename
+// (as extracted from an incoming HTTP request path).
+func (idx *Index) Lookup(filename string) (PackageEntry, bool) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	for _, e := range idx.entries {
+		if e.Filename == filename {
+			return e, true
+		}
+	}
+	return PackageEntry{}, false
+}
+
+// RenderPackages renders every entry as a Debian "Packages" file.
+func (idx *Index) RenderPackages() []byte {
+	var buf bytes.Buffer
+	for _, e := range idx.All() {
+		fmt.Fprintf(&buf, "Package: %s\n", e.Package)
+		fmt.Fprintf(&buf, "Version: %s\n", e.Version)
+		fmt.Fprintf(&buf, "Architecture: %s\n", e.Architecture)
+		fmt.Fprintf(&buf, "Filename: ./%s\n", e.Filename)
+		fmt.Fprintf(&buf, "Size: %d\n", e.Size)
+		if e.SHA256 != "" {
+			fmt.Fprintf(&buf, "SHA256: %s\n", e.SHA256)
+		}
+		if e.Depends != "" {
+			fmt.Fprintf(&buf, "Depends: %s\n", e.Depends)
+		}
+		if e.Description != "" {
+			fmt.Fprintf(&buf, "Description: %s\n", e.Description)
+		}
+		buf.WriteString("\n")
+	}
+	return buf.Bytes()
+}
+
+// RenderPackagesGz renders the same content as RenderPackages, gzip-compressed.
+func (idx *Index) RenderPackagesGz() ([]byte, error) {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(idx.RenderPackages()); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// LoadCache reads a previously-saved Index from path. A missing file is
+// not an error - it simply returns an empty Index, as on first run.
+func LoadCache(path string) (*Index, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return New(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading cache file: %w", err)
+	}
+
+	var entries []PackageEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parsing cache file: %w", err)
+	}
+
+	idx := New()
+	for _, e := range entries {
+		idx.entries[e.Key] = e
+	}
+	return idx, nil
+}
+
+// SaveCache writes the Index to path atomically (write to a temp file in
+// the same directory, then rename over the destination).
+func (idx *Index) SaveCache(path string) error {
+	idx.mu.RLock()
+	entries := make([]PackageEntry, 0, len(idx.entries))
+	for _, e := range idx.entries {
+		entries = append(entries, e)
+	}
+	idx.mu.RUnlock()
+
+	data, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling cache: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".index-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp cache file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing temp cache file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp cache file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("renaming temp cache file into place: %w", err)
+	}
+	return nil
+}
