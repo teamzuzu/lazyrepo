@@ -3,6 +3,9 @@ package index
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -11,16 +14,17 @@ import (
 
 func sampleEntry() PackageEntry {
 	return PackageEntry{
-		Key:          "sha256:abc123",
-		Package:      "pve-microvm",
-		Version:      "0.3.21-1",
-		Architecture: "all",
-		Description:  "MicroVM support for Proxmox VE",
-		Depends:      "qemu-utils",
-		Filename:     "pve-microvm_0.3.21-1_all.deb",
-		Size:         13035136,
-		SHA256:       "abc123",
-		DownloadURL:  "https://github.com/rcarmo/pve-microvm/releases/download/v0.3.21/pve-microvm_0.3.21-1_all.deb",
+		Key:           "sha256:abc123",
+		Package:       "pve-microvm",
+		Version:       "0.3.21-1",
+		Architecture:  "all",
+		Description:   "MicroVM support for Proxmox VE",
+		Depends:       "qemu-utils",
+		Filename:      "pve-microvm_0.3.21-1_all.deb",
+		Size:          13035136,
+		SHA256:        "abc123",
+		DownloadURL:   "https://github.com/rcarmo/pve-microvm/releases/download/v0.3.21/pve-microvm_0.3.21-1_all.deb",
+		InstalledSize: 13206,
 	}
 }
 
@@ -80,6 +84,7 @@ func TestIndex_RenderPackages(t *testing.T) {
 		"Package: pve-microvm\n",
 		"Version: 0.3.21-1\n",
 		"Architecture: all\n",
+		"Installed-Size: 13206\n",
 		"Filename: ./pve-microvm_0.3.21-1_all.deb\n",
 		"Size: 13035136\n",
 		"SHA256: abc123\n",
@@ -92,6 +97,18 @@ func TestIndex_RenderPackages(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, "\n\n") {
 		t.Error("expected stanza to end with a blank line separator")
+	}
+}
+
+func TestIndex_RenderPackages_OmitsInstalledSizeWhenZero(t *testing.T) {
+	idx := New()
+	e := sampleEntry()
+	e.InstalledSize = 0
+	idx.Add(e)
+
+	out := string(idx.RenderPackages())
+	if strings.Contains(out, "Installed-Size:") {
+		t.Errorf("RenderPackages() should omit Installed-Size when zero, got:\n%s", out)
 	}
 }
 
@@ -113,6 +130,43 @@ func TestIndex_RenderPackagesGz_RoundTrips(t *testing.T) {
 	}
 	if string(decompressed) != string(idx.RenderPackages()) {
 		t.Error("RenderPackagesGz content does not match RenderPackages after decompression")
+	}
+}
+
+func TestIndex_RenderRelease_HashesMatchPackagesFiles(t *testing.T) {
+	idx := New()
+	idx.Add(sampleEntry())
+
+	packages := idx.RenderPackages()
+	packagesGz, err := idx.RenderPackagesGz()
+	if err != nil {
+		t.Fatalf("RenderPackagesGz returned error: %v", err)
+	}
+
+	release, err := idx.RenderRelease()
+	if err != nil {
+		t.Fatalf("RenderRelease returned error: %v", err)
+	}
+	out := string(release)
+
+	wantMD5 := fmt.Sprintf("%x %d Packages\n", md5.Sum(packages), len(packages))
+	wantMD5Gz := fmt.Sprintf("%x %d Packages.gz\n", md5.Sum(packagesGz), len(packagesGz))
+	wantSHA256 := fmt.Sprintf("%x %d Packages\n", sha256.Sum256(packages), len(packages))
+	wantSHA256Gz := fmt.Sprintf("%x %d Packages.gz\n", sha256.Sum256(packagesGz), len(packagesGz))
+
+	for _, want := range []string{
+		"Suite: ./\n",
+		" " + wantMD5,
+		" " + wantMD5Gz,
+		" " + wantSHA256,
+		" " + wantSHA256Gz,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("RenderRelease() missing %q in:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "Date: ") {
+		t.Error("RenderRelease() missing Date field")
 	}
 }
 

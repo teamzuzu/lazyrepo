@@ -66,6 +66,23 @@ func TestHandlePackagesGz(t *testing.T) {
 	}
 }
 
+func TestHandleRelease(t *testing.T) {
+	s := New(newTestIndex(), fakeHealth{healthy: true})
+	req := httptest.NewRequest(http.MethodGet, "/Release", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Suite: ./\n", "MD5Sum:\n", "SHA256:\n", " Packages\n", " Packages.gz\n"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q, got:\n%s", want, body)
+		}
+	}
+}
+
 func TestHandleDebRedirect_Found(t *testing.T) {
 	s := New(newTestIndex(), fakeHealth{healthy: true})
 	req := httptest.NewRequest(http.MethodGet, "/pve-microvm_0.3.21-1_all.deb", nil)

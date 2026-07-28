@@ -30,6 +30,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/Packages", s.handlePackages)
 	mux.HandleFunc("/Packages.gz", s.handlePackagesGz)
+	mux.HandleFunc("/Release", s.handleRelease)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/", s.handleDebRedirect)
 	return mux
@@ -47,6 +48,16 @@ func (s *Server) handlePackagesGz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
+	w.Write(data)
+}
+
+func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
+	data, err := s.idx.RenderRelease()
+	if err != nil {
+		http.Error(w, "failed to render Release", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data)
 }
 

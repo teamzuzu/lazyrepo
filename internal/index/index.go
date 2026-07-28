@@ -3,27 +3,31 @@ package index
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 // PackageEntry is one Debian package known to lazyrepo, derived from a
 // single GitHub release asset.
 type PackageEntry struct {
-	Key          string // dedup identity, e.g. "sha256:<digest>"
-	Package      string
-	Version      string
-	Architecture string
-	Description  string
-	Depends      string
-	Filename     string // bare asset name, e.g. "pve-microvm_0.3.21-1_all.deb"
-	Size         int64
-	SHA256       string
-	DownloadURL  string
+	Key           string // dedup identity, e.g. "sha256:<digest>"
+	Package       string
+	Version       string
+	Architecture  string
+	Description   string
+	Depends       string
+	Filename      string // bare asset name, e.g. "pve-microvm_0.3.21-1_all.deb"
+	Size          int64
+	SHA256        string
+	DownloadURL   string
+	InstalledSize int64 // KiB, from the .deb's own Installed-Size control field
 }
 
 // Index is the in-memory set of known packages, safe for concurrent use.
@@ -89,6 +93,9 @@ func (idx *Index) RenderPackages() []byte {
 		fmt.Fprintf(&buf, "Package: %s\n", e.Package)
 		fmt.Fprintf(&buf, "Version: %s\n", e.Version)
 		fmt.Fprintf(&buf, "Architecture: %s\n", e.Architecture)
+		if e.InstalledSize != 0 {
+			fmt.Fprintf(&buf, "Installed-Size: %d\n", e.InstalledSize)
+		}
 		fmt.Fprintf(&buf, "Filename: ./%s\n", e.Filename)
 		fmt.Fprintf(&buf, "Size: %d\n", e.Size)
 		if e.SHA256 != "" {
@@ -115,6 +122,39 @@ func (idx *Index) RenderPackagesGz() ([]byte, error) {
 	if err := w.Close(); err != nil {
 		return nil, err
 	}
+	return buf.Bytes(), nil
+}
+
+// RenderRelease renders an (unsigned) apt "Release" file listing the
+// MD5Sum/SHA256 hashes and sizes of Packages and Packages.gz. Without this,
+// apt has no declared list of which index files exist and blindly probes
+// every compression variant (Packages.xz, .bz2, .lzma, .gz, ...) before
+// falling back to one that succeeds - each miss logs as a 404. Listing the
+// real files here means apt fetches only what's actually there.
+func (idx *Index) RenderRelease() ([]byte, error) {
+	packages := idx.RenderPackages()
+	packagesGz, err := idx.RenderPackagesGz()
+	if err != nil {
+		return nil, err
+	}
+
+	md5Sum := md5.Sum(packages)
+	sha256Sum := sha256.Sum256(packages)
+	md5SumGz := md5.Sum(packagesGz)
+	sha256SumGz := sha256.Sum256(packagesGz)
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "Origin: lazyrepo\n")
+	fmt.Fprintf(&buf, "Label: lazyrepo\n")
+	fmt.Fprintf(&buf, "Suite: ./\n")
+	fmt.Fprintf(&buf, "Date: %s\n", time.Now().UTC().Format(time.RFC1123))
+	fmt.Fprintf(&buf, "Description: lazyrepo apt repository\n")
+	fmt.Fprintf(&buf, "MD5Sum:\n")
+	fmt.Fprintf(&buf, " %x %d Packages\n", md5Sum, len(packages))
+	fmt.Fprintf(&buf, " %x %d Packages.gz\n", md5SumGz, len(packagesGz))
+	fmt.Fprintf(&buf, "SHA256:\n")
+	fmt.Fprintf(&buf, " %x %d Packages\n", sha256Sum, len(packages))
+	fmt.Fprintf(&buf, " %x %d Packages.gz\n", sha256SumGz, len(packagesGz))
 	return buf.Bytes(), nil
 }
 

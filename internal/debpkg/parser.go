@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -24,11 +25,12 @@ const maxControlFileSize = 1 * 1024 * 1024 // 1 MB
 // ControlFields is the subset of a .deb's control file that lazyrepo needs
 // to render an apt Packages stanza.
 type ControlFields struct {
-	Package      string
-	Version      string
-	Architecture string
-	Depends      string
-	Description  string
+	Package       string
+	Version       string
+	Architecture  string
+	Depends       string
+	Description   string
+	InstalledSize int64 // KiB; 0 if the control file has no Installed-Size field
 }
 
 // ParseControl extracts control file fields from the raw bytes of a .deb
@@ -158,6 +160,9 @@ func parseControlText(text string) (*ControlFields, error) {
 		Architecture: fields["Architecture"],
 		Depends:      fields["Depends"],
 		Description:  fields["Description"],
+	}
+	if size, err := strconv.ParseInt(fields["Installed-Size"], 10, 64); err == nil {
+		cf.InstalledSize = size
 	}
 	if cf.Package == "" || cf.Version == "" || cf.Architecture == "" {
 		return nil, fmt.Errorf("control file missing one of required fields Package/Version/Architecture")

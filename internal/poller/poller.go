@@ -129,16 +129,17 @@ func (p *Poller) pollRepo(ctx context.Context, rc *config.RepoConfig) error {
 			}
 
 			p.idx.Add(index.PackageEntry{
-				Key:          key,
-				Package:      fields.Package,
-				Version:      fields.Version,
-				Architecture: fields.Architecture,
-				Description:  fields.Description,
-				Depends:      fields.Depends,
-				Filename:     asset.Name,
-				Size:         asset.Size,
-				SHA256:       asset.SHA256,
-				DownloadURL:  asset.DownloadURL,
+				Key:           key,
+				Package:       fields.Package,
+				Version:       fields.Version,
+				Architecture:  fields.Architecture,
+				Description:   fields.Description,
+				Depends:       fields.Depends,
+				Filename:      asset.Name,
+				Size:          asset.Size,
+				SHA256:        asset.SHA256,
+				DownloadURL:   asset.DownloadURL,
+				InstalledSize: fields.InstalledSize,
 			})
 		}
 	}

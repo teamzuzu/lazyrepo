@@ -17,7 +17,7 @@ import (
 )
 
 func TestPollOnce_IndexesNewDebAndPersistsCache(t *testing.T) {
-	debBytes := testutil.BuildDeb(t, "Package: pve-microvm\nVersion: 0.3.21-1\nArchitecture: all\n")
+	debBytes := testutil.BuildDeb(t, "Package: pve-microvm\nVersion: 0.3.21-1\nArchitecture: all\nInstalled-Size: 13206\n")
 
 	var ts *httptest.Server
 	mux := http.NewServeMux()
@@ -70,6 +70,9 @@ func TestPollOnce_IndexesNewDebAndPersistsCache(t *testing.T) {
 	}
 	if entry.Version != "0.3.21-1" {
 		t.Errorf("Version = %q, want %q", entry.Version, "0.3.21-1")
+	}
+	if entry.InstalledSize != 13206 {
+		t.Errorf("InstalledSize = %d, want %d", entry.InstalledSize, 13206)
 	}
 	if !p.Healthy() {
 		t.Error("expected Healthy() to be true after a successful poll")
