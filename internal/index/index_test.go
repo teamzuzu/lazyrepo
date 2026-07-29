@@ -39,6 +39,21 @@ func TestIndex_HasAdd(t *testing.T) {
 	}
 }
 
+func TestIndex_Get(t *testing.T) {
+	idx := New()
+	if _, ok := idx.Get("sha256:abc123"); ok {
+		t.Fatal("empty index should not have any key")
+	}
+	idx.Add(sampleEntry())
+	e, ok := idx.Get("sha256:abc123")
+	if !ok {
+		t.Fatal("expected Get to find entry after Add")
+	}
+	if e.InstalledSize != 13206 {
+		t.Errorf("InstalledSize = %d, want %d", e.InstalledSize, 13206)
+	}
+}
+
 func TestIndex_All_SortedByPackageThenVersion(t *testing.T) {
 	idx := New()
 	idx.Add(PackageEntry{Key: "b", Package: "zeta", Version: "1.0"})

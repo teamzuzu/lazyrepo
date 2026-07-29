@@ -108,8 +108,12 @@ func (p *Poller) pollRepo(ctx context.Context, rc *config.RepoConfig) error {
 			if !rc.Matches(asset.Name) {
 				continue
 			}
+			// Re-parse rather than skip if InstalledSize is still zero: a
+			// cache populated by an older lazyrepo version (before
+			// InstalledSize was tracked) would otherwise never pick up the
+			// field apt needs to recognize an already-installed version.
 			key := assetKey(asset)
-			if p.idx.Has(key) {
+			if existing, ok := p.idx.Get(key); ok && existing.InstalledSize != 0 {
 				continue
 			}
 			if asset.Size > maxAssetSize {

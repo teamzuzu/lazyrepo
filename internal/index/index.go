@@ -49,6 +49,14 @@ func (idx *Index) Has(key string) bool {
 	return ok
 }
 
+// Get returns the entry with the given Key, if any.
+func (idx *Index) Get(key string) (PackageEntry, bool) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	e, ok := idx.entries[key]
+	return e, ok
+}
+
 // Add inserts or replaces the entry for e.Key.
 func (idx *Index) Add(e PackageEntry) {
 	idx.mu.Lock()
