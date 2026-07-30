@@ -1,4 +1,6 @@
-# lazyrepo
+# lazy repo
+
+[logo](./lazy.png)
 
 Turns one or more GitHub repos that publish `.deb` files as release assets into a normal
 apt repository, so `apt update`/`apt upgrade` picks up new releases automatically. No
