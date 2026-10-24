@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lazyrepo
+spec:
+  replicas: 1
+  # Only one process should write the cache on the persistent volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lazyrepo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lazyrepo
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lazyrepo
+          image: ghcr.io/teamzuzu/lazyrepo:latest
+          imagePullPolicy: Always
+          args:
+            - -config
+            - /etc/lazyrepo/config.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 1Gi
+          # Keep serving cached metadata during upstream GitHub outages.
+          # /healthz reflects polling errors, so it is not a liveness probe.
+          readinessProbe:
+            httpGet:
+              path: /Release
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/lazyrepo
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: lazyrepo-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: lazyrepo-data
