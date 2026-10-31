@@ -100,6 +100,14 @@ repos:
 | `repos[].asset_filter` | Any name ending in `.deb` | Optional regular expression for asset names. |
 
 See [config.example.yaml](config.example.yaml) for a complete starting point.
+Each poll scans up to 1,000 recent releases per repository, including drafts and
+prereleases before filtering. Requests use pages of 10 releases and a 30-second
+request timeout. Transient 502/503/504 responses get up to three attempts with
+one- and two-second backoffs. Other HTTP errors include GitHub's message and page
+number in the logs. If a later page fails, completed pages are still indexed and
+saved, but the poll remains unhealthy. Previously cached packages are retained;
+older releases beyond the scan limit are not discovered on a fresh installation.
+
 Configuration is loaded at startup; restart the service after editing it. The
 example uses `/data/index.json` for containers; choose a writable local path when
 running the binary directly.

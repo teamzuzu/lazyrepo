@@ -95,10 +95,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 }
 
 func (p *Poller) pollRepo(ctx context.Context, rc *config.RepoConfig) error {
-	releases, err := p.gh.ListReleases(ctx, rc.Owner(), rc.Name())
-	if err != nil {
-		return fmt.Errorf("listing releases: %w", err)
-	}
+	releases, listingErr := p.gh.ListReleases(ctx, rc.Owner(), rc.Name())
 
 	for _, rel := range releases {
 		if rel.Draft || rel.Prerelease {
@@ -146,6 +143,9 @@ func (p *Poller) pollRepo(ctx context.Context, rc *config.RepoConfig) error {
 				InstalledSize: fields.InstalledSize,
 			})
 		}
+	}
+	if listingErr != nil {
+		return fmt.Errorf("listing releases (processed %d releases from completed pages): %w", len(releases), listingErr)
 	}
 	return nil
 }

@@ -237,3 +237,42 @@ func TestPollOnce_RepoErrorMarksUnhealthyButDoesNotPanic(t *testing.T) {
 		t.Error("expected Healthy() to be false after a failed poll")
 	}
 }
+
+func TestPollOnce_IndexesCompletedPagesAfterListingFailure(t *testing.T) {
+	deb := testutil.BuildDeb(t, "Package: codex\nVersion: 1\nArchitecture: amd64\nInstalled-Size: 10\n")
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/asset.deb" {
+			w.Write(deb)
+			return
+		}
+		if r.URL.Query().Get("page") == "2" {
+			w.WriteHeader(422)
+			w.Write([]byte(`{"message":"pagination failed"}`))
+			return
+		}
+		page := make([]map[string]any, 10)
+		for i := range page {
+			page[i] = map[string]any{"prerelease": true}
+		}
+		page[0] = map[string]any{"tag_name": "v1", "assets": []map[string]any{{"name": "codex.deb", "size": len(deb), "browser_download_url": ts.URL + "/asset.deb", "digest": "sha256:codex"}}}
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer ts.Close()
+	path := filepath.Join(t.TempDir(), "index.json")
+	idx := index.New()
+	p := New(&config.Config{CacheFile: path, Repos: []config.RepoConfig{{Repo: "openai/codex"}}}, github.NewClientWithBaseURL(ts.URL), idx)
+	if err := p.PollOnce(context.Background()); err == nil {
+		t.Fatal("listing failure must remain visible")
+	}
+	if p.Healthy() {
+		t.Fatal("partial poll should report unhealthy")
+	}
+	loaded, err := index.LoadCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Has("sha256:codex") {
+		t.Fatal("completed page was not indexed and persisted")
+	}
+}
