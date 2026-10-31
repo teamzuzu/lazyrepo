@@ -64,7 +64,8 @@ func (idx *Index) Add(e PackageEntry) {
 	idx.entries[e.Key] = e
 }
 
-// All returns every entry, sorted by Package then Version for stable output.
+// All returns entries in a total order, including architecture and unique key
+// tie-breakers, so map iteration cannot change repository checksums.
 func (idx *Index) All() []PackageEntry {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
@@ -76,7 +77,16 @@ func (idx *Index) All() []PackageEntry {
 		if out[i].Package != out[j].Package {
 			return out[i].Package < out[j].Package
 		}
-		return out[i].Version < out[j].Version
+		if out[i].Version != out[j].Version {
+			return out[i].Version < out[j].Version
+		}
+		if out[i].Architecture != out[j].Architecture {
+			return out[i].Architecture < out[j].Architecture
+		}
+		if out[i].Filename != out[j].Filename {
+			return out[i].Filename < out[j].Filename
+		}
+		return out[i].Key < out[j].Key
 	})
 	return out
 }
@@ -122,9 +132,13 @@ func (idx *Index) RenderPackages() []byte {
 
 // RenderPackagesGz renders the same content as RenderPackages, gzip-compressed.
 func (idx *Index) RenderPackagesGz() ([]byte, error) {
+	return compressPackages(idx.RenderPackages())
+}
+
+func compressPackages(packages []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
-	if _, err := w.Write(idx.RenderPackages()); err != nil {
+	if _, err := w.Write(packages); err != nil {
 		return nil, err
 	}
 	if err := w.Close(); err != nil {
@@ -140,10 +154,16 @@ func (idx *Index) RenderPackagesGz() ([]byte, error) {
 // falling back to one that succeeds - each miss logs as a 404. Listing the
 // real files here means apt fetches only what's actually there.
 func (idx *Index) RenderRelease() ([]byte, error) {
-	packages := idx.RenderPackages()
-	packagesGz, err := idx.RenderPackagesGz()
+	_, _, release, err := idx.RenderSnapshot()
+	return release, err
+}
+
+// RenderSnapshot renders all repository files from one immutable package list.
+func (idx *Index) RenderSnapshot() (packages, packagesGz, release []byte, err error) {
+	packages = idx.RenderPackages()
+	packagesGz, err = compressPackages(packages)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	md5Sum := md5.Sum(packages)
@@ -152,6 +172,7 @@ func (idx *Index) RenderRelease() ([]byte, error) {
 	sha256SumGz := sha256.Sum256(packagesGz)
 
 	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "Acquire-By-Hash: yes\n")
 	fmt.Fprintf(&buf, "Origin: lazyrepo\n")
 	fmt.Fprintf(&buf, "Label: lazyrepo\n")
 	fmt.Fprintf(&buf, "Suite: ./\n")
@@ -163,7 +184,7 @@ func (idx *Index) RenderRelease() ([]byte, error) {
 	fmt.Fprintf(&buf, "SHA256:\n")
 	fmt.Fprintf(&buf, " %x %d Packages\n", sha256Sum, len(packages))
 	fmt.Fprintf(&buf, " %x %d Packages.gz\n", sha256SumGz, len(packagesGz))
-	return buf.Bytes(), nil
+	return packages, packagesGz, buf.Bytes(), nil
 }
 
 // LoadCache reads a previously-saved Index from path. A missing file is

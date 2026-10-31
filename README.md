@@ -40,6 +40,13 @@ metadata, and saves the index. Package bytes are read during indexing but are
 The repository exposes `Packages`, `Packages.gz`, and an unsigned `Release` file.
 Clients use the flat repository layout (`./`), without suites or components.
 
+Index output is deterministic across architectures. `Release` advertises apt's
+`Acquire-By-Hash` support, so clients fetch the exact index bytes whose checksums
+they received, even if a poll updates the index between requests. The service
+retains the latest 64 distinct index files in memory; this history resets on
+restart. Keep the supplied single-replica deployment and avoid proxy rewriting
+of repository responses.
+
 ## Quick start with Docker Compose
 
 Requires Docker with the Compose plugin.

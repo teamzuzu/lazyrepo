@@ -218,3 +218,32 @@ func TestLoadCache_MissingFile_ReturnsEmptyIndex(t *testing.T) {
 		t.Errorf("len(All()) = %d, want 0 for missing cache file", len(idx.All()))
 	}
 }
+
+func TestMultiArchitectureOutputIsDeterministic(t *testing.T) {
+	idx := New()
+	for _, arch := range []string{"amd64", "arm64", "armhf"} {
+		for _, suffix := range []string{"a", "b"} {
+			e := sampleEntry()
+			e.Key = arch + suffix
+			e.Architecture = arch
+			e.Filename = "package_" + arch + suffix + ".deb"
+			idx.Add(e)
+		}
+	}
+	want := idx.RenderPackages()
+	for i := 0; i < 100; i++ {
+		packages, compressed, release, err := idx.RenderSnapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(packages, want) {
+			t.Fatal("package order changed between renders")
+		}
+		for name, data := range map[string][]byte{"Packages": packages, "Packages.gz": compressed} {
+			line := fmt.Sprintf(" %x %d %s\n", sha256.Sum256(data), len(data), name)
+			if !strings.Contains(string(release), line) {
+				t.Fatalf("Release does not match %s", name)
+			}
+		}
+	}
+}

@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -164,5 +167,48 @@ func TestHandleHealthz(t *testing.T) {
 	unhealthy.Handler().ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 when unhealthy", rec2.Code)
+	}
+}
+
+func TestByHashSurvivesIndexUpdate(t *testing.T) {
+	idx := newTestIndex()
+	s := New(idx, fakeHealth{healthy: true})
+	handler := s.Handler()
+	get := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	release := get("/Release")
+	if !strings.Contains(release.Body.String(), "Acquire-By-Hash: yes\n") {
+		t.Fatal("by-hash not advertised")
+	}
+	oldPackages := idx.RenderPackages()
+	oldGz, err := idx.RenderPackagesGz()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Add(index.PackageEntry{Key: "new", Package: "k9s", Version: "1", Architecture: "amd64"})
+	get("/Release")
+	for _, data := range [][]byte{oldPackages, oldGz} {
+		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if !strings.Contains(release.Body.String(), hash) {
+			t.Fatal("hash absent from Release")
+		}
+		got := get("/by-hash/SHA256/" + hash)
+		if got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), data) {
+			t.Fatal("old index bytes not preserved")
+		}
+	}
+	if get("/by-hash/SHA256/unknown").Code != http.StatusNotFound {
+		t.Fatal("unknown hash must return 404")
+	}
+	// Repeated Release requests must not consume retention slots.
+	for i := 0; i < 100; i++ {
+		get("/Release")
+	}
+	if len(s.hashOrder) != 4 {
+		t.Fatalf("retained %d files, want 4", len(s.hashOrder))
 	}
 }
