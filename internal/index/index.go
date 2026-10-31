@@ -91,17 +91,32 @@ func (idx *Index) All() []PackageEntry {
 	return out
 }
 
-// Lookup finds the entry whose Filename matches the given bare filename
-// (as extracted from an incoming HTTP request path).
+// PackagePath identifies the release asset independently of its reused filename.
+// Deriving it from persisted fields also upgrades existing caches without a poll.
+func PackagePath(e PackageEntry) string {
+	digest := sha256.Sum256([]byte(e.DownloadURL + "\x00" + e.Key))
+	return fmt.Sprintf("packages/%x/%s", digest, e.Filename)
+}
+
+// Lookup resolves unique asset paths. Legacy bare filenames are supported only
+// when unambiguous; choosing one of several releases would return wrong bytes.
 func (idx *Index) Lookup(filename string) (PackageEntry, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
+	var match PackageEntry
+	found := false
 	for _, e := range idx.entries {
-		if e.Filename == filename {
+		if PackagePath(e) == filename {
 			return e, true
 		}
+		if e.Filename == filename {
+			if found {
+				return PackageEntry{}, false
+			}
+			match, found = e, true
+		}
 	}
-	return PackageEntry{}, false
+	return match, found
 }
 
 // RenderPackages renders every entry as a Debian "Packages" file.
@@ -114,7 +129,7 @@ func (idx *Index) RenderPackages() []byte {
 		if e.InstalledSize != 0 {
 			fmt.Fprintf(&buf, "Installed-Size: %d\n", e.InstalledSize)
 		}
-		fmt.Fprintf(&buf, "Filename: ./%s\n", e.Filename)
+		fmt.Fprintf(&buf, "Filename: ./%s\n", PackagePath(e))
 		fmt.Fprintf(&buf, "Size: %d\n", e.Size)
 		if e.SHA256 != "" {
 			fmt.Fprintf(&buf, "SHA256: %s\n", e.SHA256)

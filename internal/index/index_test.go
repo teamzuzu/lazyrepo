@@ -100,7 +100,7 @@ func TestIndex_RenderPackages(t *testing.T) {
 		"Version: 0.3.21-1\n",
 		"Architecture: all\n",
 		"Installed-Size: 13206\n",
-		"Filename: ./pve-microvm_0.3.21-1_all.deb\n",
+		"Filename: ./" + PackagePath(sampleEntry()) + "\n",
 		"Size: 13035136\n",
 		"SHA256: abc123\n",
 		"Depends: qemu-utils\n",
@@ -245,5 +245,41 @@ func TestMultiArchitectureOutputIsDeterministic(t *testing.T) {
 				t.Fatalf("Release does not match %s", name)
 			}
 		}
+	}
+}
+
+func TestReusedAssetFilenamesHaveUniquePaths(t *testing.T) {
+	idx := New()
+	first := sampleEntry()
+	first.Filename = "k9s_linux_amd64.deb"
+	second := first
+	second.Key = "sha256:second"
+	second.Version = "0.52.0"
+	second.DownloadURL = "https://github.com/derailed/k9s/releases/download/v0.52.0/k9s_linux_amd64.deb"
+	second.Size++
+	idx.Add(first)
+	idx.Add(second)
+	for _, e := range []PackageEntry{first, second} {
+		got, ok := idx.Lookup(PackagePath(e))
+		if !ok || got.DownloadURL != e.DownloadURL || got.Size != e.Size {
+			t.Fatal("asset path resolved to wrong release")
+		}
+		if !strings.Contains(string(idx.RenderPackages()), "Filename: ./"+PackagePath(e)+"\n") {
+			t.Fatal("unique asset path missing")
+		}
+	}
+	if _, ok := idx.Lookup(first.Filename); ok {
+		t.Fatal("ambiguous legacy filename should not resolve")
+	}
+	path := filepath.Join(t.TempDir(), "cache.json")
+	if err := idx.SaveCache(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := loaded.Lookup(PackagePath(first)); !ok || e.DownloadURL != first.DownloadURL {
+		t.Fatal("cached paths changed on reload")
 	}
 }

@@ -212,3 +212,27 @@ func TestByHashSurvivesIndexUpdate(t *testing.T) {
 		t.Fatalf("retained %d files, want 4", len(s.hashOrder))
 	}
 }
+
+func TestRedirectReusedFilenameToExactRelease(t *testing.T) {
+	idx := index.New()
+	entries := []index.PackageEntry{
+		{Key: "old", Filename: "k9s_linux_amd64.deb", Version: "0.50.0", DownloadURL: "https://github.com/derailed/k9s/releases/download/v0.50.0/k9s_linux_amd64.deb"},
+		{Key: "new", Filename: "k9s_linux_amd64.deb", Version: "0.51.0", DownloadURL: "https://github.com/derailed/k9s/releases/download/v0.51.0/k9s_linux_amd64.deb"},
+	}
+	for _, e := range entries {
+		idx.Add(e)
+	}
+	handler := New(idx, fakeHealth{healthy: true}).Handler()
+	for _, e := range entries {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+index.PackagePath(e), nil))
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != e.DownloadURL {
+			t.Fatalf("wrong redirect: %d %s", rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/k9s_linux_amd64.deb", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatal("ambiguous URL must not return arbitrary release")
+	}
+}
