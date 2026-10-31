@@ -1,5 +1,5 @@
 listen: ":8080"
-poll_interval: 15m
+poll_interval: 6h
 cache_file: /data/index.json
 
 repos:

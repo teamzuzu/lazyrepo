@@ -3,10 +3,12 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestListReleases_SinglePage(t *testing.T) {
@@ -172,5 +174,108 @@ func TestListReleases_CancellationStopsBackoff(t *testing.T) {
 	_, err := NewClientWithBaseURL(ts.URL).ListReleases(ctx, "o", "r")
 	if err == nil || calls != 1 {
 		t.Fatalf("cancellation ignored: %v, calls %d", err, calls)
+	}
+}
+
+func TestUnchangedHeadSkipsCompletedHistory(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("If-None-Match") == `"head"` {
+			w.WriteHeader(304)
+			return
+		}
+		if r.URL.Query().Get("page") == "1" {
+			w.Header().Set("ETag", `"head"`)
+			json.NewEncoder(w).Encode(make([]apiRelease, 10))
+		} else {
+			w.Write([]byte(`[{"tag_name":"older"}]`))
+		}
+	}))
+	defer ts.Close()
+	c := NewClientWithBaseURL(ts.URL)
+	for i := 0; i < 2; i++ {
+		releases, err := c.ListReleases(context.Background(), "o", "r")
+		if err != nil || len(releases) != 11 {
+			t.Fatalf("lost history: %v %d", err, len(releases))
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("rescanned unchanged history: %d calls", calls)
+	}
+}
+
+func TestUnchangedHeadResumesIncompleteHistory(t *testing.T) {
+	fail := true
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("page") == "1" {
+			if r.Header.Get("If-None-Match") != "" {
+				w.WriteHeader(304)
+				return
+			}
+			w.Header().Set("ETag", `"head"`)
+			json.NewEncoder(w).Encode(make([]apiRelease, 10))
+		} else if fail {
+			w.WriteHeader(422)
+		} else {
+			w.Write([]byte(`[]`))
+		}
+	}))
+	defer ts.Close()
+	c := NewClientWithBaseURL(ts.URL)
+	if _, err := c.ListReleases(context.Background(), "o", "r"); err == nil {
+		t.Fatal("expected failure")
+	}
+	fail = false
+	if _, err := c.ListReleases(context.Background(), "o", "r"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 4 {
+		t.Fatalf("did not resume: %d requests", calls)
+	}
+}
+
+func TestRateLimitCooldownSharedAcrossRepos(t *testing.T) {
+	for _, status := range []int{403, 429, 200} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			calls := 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					w.Header().Set("X-RateLimit-Remaining", "0")
+					w.Header().Set("X-RateLimit-Reset", "1100")
+					w.Header().Set("Retry-After", "150")
+					w.WriteHeader(status)
+					if status == 200 {
+						w.Write([]byte(`[]`))
+					} else {
+						w.Write([]byte(`{"message":"rate limit exceeded"}`))
+					}
+				} else {
+					w.Write([]byte(`[]`))
+				}
+			}))
+			defer ts.Close()
+			c := NewClientWithBaseURL(ts.URL)
+			c.now = func() time.Time { return now }
+			c.ListReleases(context.Background(), "o", "first")
+			now = time.Unix(1102, 0)
+			if _, err := c.ListReleases(context.Background(), "o", "second"); err == nil {
+				t.Fatal("ignored Retry-After")
+			}
+			if calls != 1 {
+				t.Fatal("sent request while rate limited")
+			}
+			now = time.Unix(1151, 0)
+			if _, err := c.ListReleases(context.Background(), "o", "second"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 2 {
+				t.Fatal("did not resume after cooldown")
+			}
+		})
 	}
 }

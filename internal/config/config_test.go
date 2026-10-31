@@ -29,8 +29,8 @@ repos:
 	if cfg.Listen != ":8080" {
 		t.Errorf("Listen = %q, want %q", cfg.Listen, ":8080")
 	}
-	if cfg.PollInterval != 15*time.Minute {
-		t.Errorf("PollInterval = %v, want %v", cfg.PollInterval, 15*time.Minute)
+	if cfg.PollInterval != 6*time.Hour {
+		t.Errorf("PollInterval = %v, want %v", cfg.PollInterval, 6*time.Hour)
 	}
 	if cfg.CacheFile != "./index.json" {
 		t.Errorf("CacheFile = %q, want %q", cfg.CacheFile, "./index.json")

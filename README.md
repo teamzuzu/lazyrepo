@@ -80,7 +80,7 @@ volume is retained unless explicitly removed.
 
 ```yaml
 listen: ":8080"
-poll_interval: 15m
+poll_interval: 6h
 cache_file: /data/index.json
 
 repos:
@@ -94,12 +94,25 @@ repos:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `listen` | `:8080` | HTTP listen address. |
-| `poll_interval` | `15m` | Positive Go duration between polls, such as `5m` or `1h`. |
+| `poll_interval` | `6h` | Positive Go duration between polls, such as `5m` or `1h`. |
 | `cache_file` | `./index.json` | Writable path for the persistent metadata index. |
 | `repos` | Required | One or more GitHub repositories in `owner/name` format. |
 | `repos[].asset_filter` | Any name ending in `.deb` | Optional regular expression for asset names. |
 
 See [config.example.yaml](config.example.yaml) for a complete starting point.
+Polling defaults to **every six hours**, with an initial poll at startup. GitHub
+ETags are cached per page: an unchanged first page skips the remaining history
+after a complete scan. Incomplete scans are retried rather than treated as complete.
+Changes confined to older pages are discovered when the head page next changes.
+The page cache and rate-limit cooldown are in memory and reset on restart.
+
+When GitHub reports exhausted quota or a rate-limit response, requests across all
+repositories pause until the later of `X-RateLimit-Reset` and `Retry-After` (or one
+minute if no usable time is provided). The next scheduled poll after that time
+resumes requests; the service does not busy-wait or immediately repoll. Cached
+packages continue to be served. Existing configurations must explicitly change
+`poll_interval` to `6h`; changing the default does not override a configured value.
+
 Each poll scans up to 1,000 recent releases per repository, including drafts and
 prereleases before filtering. Requests use pages of 10 releases and a 30-second
 request timeout. Transient 502/503/504 responses get up to three attempts with

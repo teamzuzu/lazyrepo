@@ -80,7 +80,7 @@ func Load(path string) (*Config, error) {
 		cfg.CacheFile = "./index.json"
 	}
 	if raw.PollInterval == "" {
-		cfg.PollInterval = 15 * time.Minute
+		cfg.PollInterval = 6 * time.Hour
 	} else {
 		d, err := time.ParseDuration(raw.PollInterval)
 		if err != nil {
